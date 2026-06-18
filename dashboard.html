@@ -8,23 +8,6 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <!-- Dados alimentados pelo Cowork (Hubla + Meta). Se o arquivo não existir, o painel abre só com dados manuais. -->
 <script src="dados.js" onerror="window.__SEM_DADOS__=true"></script>
-<script>
-// ── Senha de acesso ────────────────────────────────────────────────
-(function() {
-  const HASH = "b6c3e6b1e1e2f4e3a5d7c9f2b8a4e0d1c6f3b2e9a7d5c8f1b4a2e0d3c5f8b1";
-  function sha1str(s) {
-    // SHA-256 simples via SubtleCrypto não disponível sync — usar hash manual leve
-    // Usamos btoa+comparação ofuscada: senha armazenada como hash SHA-256 hex
-    return s; // placeholder resolvido abaixo
-  }
-  const stored = sessionStorage.getItem("_af_auth");
-  if (stored === "ok") return;
-  const pwd = prompt("🔒 Painel restrito — digite a senha:");
-  if (pwd === null) { document.documentElement.innerHTML = "<body style='font-family:sans-serif;text-align:center;padding:80px;color:#888'>Acesso negado.</body>"; }
-  else if (pwd === "annasociadogabriel123") { sessionStorage.setItem("_af_auth", "ok"); }
-  else { document.documentElement.innerHTML = "<body style='font-family:sans-serif;text-align:center;padding:80px'><h2>❌ Senha incorreta</h2><p><a href=''>Tentar novamente</a></p></body>"; }
-})();
-</script>
 <style>
   :root {
     --bg: #FAF6F3; --surface: #FFFFFF; --line: #E7E1DB; --line2: #F0EBE6;
@@ -57,8 +40,34 @@
 </style>
 </head>
 <body>
-<div id="root"></div>
+<!-- ── Tela de login ──────────────────────────────────────────────── -->
+<div id="lock" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center;">
+  <div style="background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:40px 36px;max-width:340px;width:100%;text-align:center;box-shadow:0 4px 32px rgba(0,0,0,.08);">
+    <p style="font-size:28px;margin:0 0 4px">🔒</p>
+    <h2 style="font-size:17px;font-weight:600;margin:0 0 6px;color:var(--ink)">Painel Restrito</h2>
+    <p style="font-size:12px;color:var(--ink3);margin:0 0 22px">Félix Hub · Anna Magalhães</p>
+    <input id="lock-pwd" type="password" placeholder="Digite a senha…" style="margin-bottom:12px;text-align:center;font-size:15px;padding:10px 14px;" onkeydown="if(event.key==='Enter')window._checkPwd()" />
+    <button class="primary" onclick="window._checkPwd()" style="width:100%;padding:10px;font-size:14px;">Entrar</button>
+    <p id="lock-err" style="color:var(--red);font-size:12px;margin:10px 0 0;display:none">Senha incorreta. Tente novamente.</p>
+  </div>
+</div>
+<div id="root" style="display:none"></div>
 <script>
+(function() {
+  const PWD = "annasociadogabriel123";
+  const lock = document.getElementById("lock");
+  const root = document.getElementById("root");
+  window._checkPwd = function() {
+    const v = document.getElementById("lock-pwd").value;
+    if (v === PWD) { sessionStorage.setItem("_af_auth","ok"); lock.style.display="none"; root.style.display=""; }
+    else { document.getElementById("lock-err").style.display="block"; document.getElementById("lock-pwd").value=""; document.getElementById("lock-pwd").focus(); }
+  };
+  if (sessionStorage.getItem("_af_auth") === "ok") { lock.style.display="none"; root.style.display=""; }
+  else { lock.style.display="flex"; root.style.display="none"; }
+  document.addEventListener("DOMContentLoaded", function() {
+    if (sessionStorage.getItem("_af_auth") !== "ok") document.getElementById("lock-pwd").focus();
+  });
+})();
 const { useState, useEffect, useMemo } = React;
 const h = React.createElement;
 // ── Config / helpers ────────────────────────────────────────────────────
