@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Gestão Financeira — Anna Magalhães · Félix Hub</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- Dados alimentados pelo Cowork (Hubla + Meta). Se o arquivo não existir, o painel abre só com dados manuais. -->
+<script src="dados.js" onerror="window.__SEM_DADOS__=true"></script>
+<style>
+  :root {
+    --bg: #FAF6F3; --surface: #FFFFFF; --line: #E7E1DB; --line2: #F0EBE6;
+    --ink: #2b2b2b; --ink2: #6b6560; --ink3: #A8A099;
+    --pink: #FF007D; --pink-bg: #FFF0F6;
+    --green: #1a7f5a; --green-bg: #E9F6F0;
+    --red: #C8326B; --red-bg: #FCEEF3;
+    --radius: 12px; --radius-sm: 8px;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 20px 64px; }
+  input, select { font-family: var(--sans); font-size: 13px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--ink); padding: 8px 10px; outline: none; width: 100%; }
+  input:focus, select:focus { border-color: var(--pink); }
+  button { font-family: var(--sans); cursor: pointer; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--surface); padding: 8px 14px; font-size: 13px; color: var(--ink); transition: all .15s; }
+  button:hover { background: var(--line2); }
+  button.primary { background: var(--pink); color: #fff; border-color: var(--pink); font-weight: 500; }
+  button.primary:hover { opacity: .9; }
+  button.danger { color: var(--red); border-color: var(--red-bg); }
+  table { width: 100%; border-collapse: collapse; }
+  th { padding: 7px 10px; font-size: 10px; color: var(--ink3); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; text-align: left; border-bottom: 1px solid var(--line); }
+  td { padding: 10px; font-size: 12.5px; border-bottom: 1px solid var(--line2); }
+  .mono { font-family: var(--mono); }
+  .muted { color: var(--ink2); }
+  .faint { color: var(--ink3); }
+  .green { color: var(--green); } .red { color: var(--red); } .pink { color: var(--pink); }
+  .b { font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const { useState, useEffect, useMemo } = React;
+const h = React.createElement;
+// ── Config / helpers ────────────────────────────────────────────────────
+const LS = "anna_fin_manual_v1";
+const COPROD_PCT = 0.28;          // fatia coprodutor (tráfego), sobre o líquido pós-Hubla
+const PRECO_TABELA = 97;          // preço de tabela do produto, sem juros
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const R$ = (v) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v || 0);
+const pct = (v, d = 1) => `${(+(v || 0)).toFixed(d)}%`;
+const num = (v) => new Intl.NumberFormat("pt-BR").format(Math.round(v || 0));
+const monthLabel = (m) => { if (!m) return "—"; const [y, mo] = m.split("-"); return new Date(+y, +mo - 1, 1).toLocaleDateString("pt-BR", { month: "short", year: "numeric" }); };
+const CATS = ["Gestor de Tráfego","Copywriter","Editor de Vídeo","Designer","Influenciador","Afiliados","Plataformas & Assinaturas (SaaS)","Produção de Conteúdo","Outros"];
+// Dados do Cowork (Hubla + Meta) — somente leitura
+const DADOS = (typeof window !== "undefined" && window.DADOS) ? window.DADOS : { hubla: [], meta: [] };
+// Deriva a cascata da Hubla a partir de bruto + comissão final
+function hublaCascade(s) {
+  const gross = s.gross || 0;
+  const commission = s.commission || 0;          // sua comissão final (pós-coprodutor) — lida da Hubla
+  const sales = s.sales || 0;
+  const preco = s.preco || PRECO_TABELA;
+  const tabela = sales * preco;                  // faturamento de tabela (sem juros)
+  const juros = Math.max(0, gross - tabela);     // juros de parcelamento embutidos no bruto
+  const postHubla = commission / (1 - COPROD_PCT); // valor líquido pós-Hubla (antes do coprodutor)
+  const hublaFee = Math.max(0, gross - postHubla);
+  const coprod = Math.max(0, postHubla - commission);
+  return { gross, commission, sales, tabela, juros, postHubla, hublaFee, coprod };
+}
+function load() {
+  try { const r = localStorage.getItem(LS); if (r) return JSON.parse(r); } catch {}
+  return { products: [{ id: "p0", name: "Construa Seu Glúteo Você Mesma" }], launches: [], expenses: [], manualHubla: [], manualMeta: [] };
+}
+function persist(d) { try { localStorage.setItem(LS, JSON.stringify(d)); } catch {} }
+// ── App ───────────────────────────────────────────────────────────────────
+function App() {
+  const [db, setDb] = useState(load);
+  const [tab, setTab] = useState("dash");
+  const [mf, setMf] = useState("all"); // filtro de mês
+  const save = (next) => { setDb(next); persist(next); };
+  const hubla = useMemo(() => [...(DADOS.hubla || []).map(x => ({ ...x, source: "cowork" })), ...db.manualHubla], [db.manualHubla]);
+  const meta = useMemo(() => [...(DADOS.meta || []).map(x => ({ ...x, source: "cowork" })), ...db.manualMeta], [db.manualMeta]);
+  const months = useMemo(() => {
+    const set = new Set();
+    hubla.forEach(x => x.month && set.add(x.month));
+    meta.forEach(x => x.month && set.add(x.month));
+    db.expenses.forEach(x => x.date && set.add(x.date.slice(0, 7)));
+    return [...set].sort().reverse();
+  }, [hubla, meta, db.expenses]);
+  const vis = useMemo(() => {
+    const fh = mf === "all" ? hubla : hubla.filter(x => x.month === mf);
+    const fm = mf === "all" ? meta : meta.filter(x => x.month === mf);
+    const fe = mf === "all" ? db.expenses : db.expenses.filter(x => (x.date || "").slice(0, 7) === mf);
+    return { hubla: fh, meta: fm, expenses: fe };
+  }, [hubla, meta, db.expenses, mf]);
+  const fin = useMemo(() => {
+    let gross = 0, commission = 0, sales = 0, tabela = 0, juros = 0, hublaFee = 0, coprod = 0;
+    vis.hubla.forEach(s => { const c = hublaCascade(s); gross += c.gross; commission += c.commission; sales += c.sales; tabela += c.tabela; juros += c.juros; hublaFee += c.hublaFee; coprod += c.coprod; });
+    const spend = vis.meta.reduce((a, b) => a + (b.spend || 0), 0);
+    const opex = vis.expenses.reduce((a, b) => a + (b.amt || 0), 0);
+    const profit = commission - spend - opex;
+    return {
+      gross, commission, sales, tabela, juros, hublaFee, coprod, spend, opex, profit,
+      costs: spend + opex,
+      roas: spend > 0 ? gross / spend : 0,
+      roasLiq: spend > 0 ? commission / spend : 0,
+      roi: (spend + opex) > 0 ? (profit / (spend + opex)) * 100 : 0,
+      margin: commission > 0 ? (profit / commission) * 100 : 0,
+      ticket: sales > 0 ? gross / sales : 0,
+      cpa: sales > 0 ? spend / sales : 0,
+    };
+  }, [vis]);
+  const TABS = [["dash","Dashboard"],["pl","DRE"],["hubla","Hubla"],["meta","Meta Ads"],["exp","Despesas"],["launches","Lançamentos"],["products","Produtos"]];
+  return h("div", { className: "wrap" },
+    h("header", { style: { borderBottom: "1px solid var(--line)", paddingBottom: 14, marginBottom: 18 } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 } },
+        h("div", null,
+          h("p", { style: { fontSize: 10, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--ink3)", margin: 0, fontWeight: 600 } }, "Félix Hub · Anna Magalhães"),
+          h("h1", { style: { fontSize: 21, fontWeight: 600, margin: "4px 0 0" } }, "Gestão Financeira — Infoprodutos")
+        ),
+        h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
+          window.__SEM_DADOS__ && h("span", { style: { fontSize: 11, color: "var(--ink3)" }, title: "dados.js não encontrado" }, "● sem dados do Cowork"),
+          h("select", { value: mf, onChange: e => setMf(e.target.value), style: { width: 180 } },
+            h("option", { value: "all" }, "Todos os meses"),
+            months.map(m => h("option", { key: m, value: m }, monthLabel(m)))
+          )
+        )
+      ),
+      h("nav", { style: { display: "flex", gap: 2, marginTop: 14, flexWrap: "wrap" } },
+        TABS.map(([k, label]) => h("button", {
+          key: k, onClick: () => setTab(k),
+          style: { border: "none", background: "none", padding: "7px 12px", borderRadius: 0, fontSize: 13,
+            color: tab === k ? "var(--pink)" : "var(--ink2)", fontWeight: tab === k ? 600 : 400,
+            borderBottom: tab === k ? "2px solid var(--pink)" : "2px solid transparent" }
+        }, label))
+      )
+    ),
+    tab === "dash" && h(Dash, { fin }),
+    tab === "pl" && h(DRE, { fin, vis }),
+    tab === "hubla" && h(HublaView, { hubla: vis.hubla }),
+    tab === "meta" && h(MetaView, { meta: vis.meta }),
+    tab === "exp" && h(ExpView, { db, save, expenses: vis.expenses }),
+    tab === "launches" && h(LaunchView, { db, save }),
+    tab === "products" && h(ProductView, { db, save })
+  );
+}
+// ── Cards / KPIs ────────────────────────────────────────────────────────
+function Card({ title, children, style }) {
+  return h("div", { style: { background: "var(--surface)", border: "1px solid var(--line)", borderRadius: "var(--radius)", padding: "16px 18px", ...style } },
+    title && h("p", { style: { fontSize: 13, fontWeight: 600, margin: "0 0 14px" } }, title), children);
+}
+function KPI({ label, value, sub, tone }) {
+  const bg = tone === "good" ? "var(--green-bg)" : tone === "bad" ? "var(--red-bg)" : tone === "pink" ? "var(--pink-bg)" : "var(--surface)";
+  const col = tone === "good" ? "var(--green)" : tone === "bad" ? "var(--red)" : tone === "pink" ? "var(--pink)" : "var(--ink)";
+  return h("div", { style: { background: bg, border: "1px solid var(--line)", borderRadius: "var(--radius)", padding: "14px 16px", flex: 1, minWidth: 150 } },
+    h("p", { style: { fontSize: 10, textTransform: "uppercase", letterSpacing: ".07em", color: "var(--ink3)", margin: "0 0 5px", fontWeight: 600 } }, label),
+    h("p", { className: "mono", style: { fontSize: 21, margin: "0 0 3px", color: col, fontWeight: 600, letterSpacing: "-.02em" } }, value),
+    sub && h("p", { style: { fontSize: 11, color: "var(--ink2)", margin: 0 } }, sub));
+}
+function Dash({ fin }) {
+  const PLRow = ({ l, v, neg, total, hi, memo }) => h("div", { style: { display: "flex", justifyContent: "space-between", padding: total ? "9px 0 4px" : memo ? "3px 0 3px 16px" : "5px 0", borderTop: total ? "1px solid var(--line)" : "none", marginTop: total ? 6 : 0 } },
+    h("span", { style: { fontSize: memo ? 11 : 13, color: total ? "var(--ink)" : memo ? "var(--ink3)" : "var(--ink2)", fontWeight: total ? 600 : 400 } }, l),
+    h("span", { className: "mono", style: { fontSize: memo ? 11 : 13, fontWeight: total ? 600 : 400, color: hi ? (v >= 0 ? "var(--green)" : "var(--red)") : memo ? "var(--ink3)" : neg ? "var(--red)" : "var(--ink)" } }, R$(v)));
+  return h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
+    h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
+      h(KPI, { label: "Faturamento Bruto", value: R$(fin.gross), sub: `${num(fin.sales)} vendas · ticket ${R$(fin.ticket)}` }),
+      h(KPI, { label: "Comissão Líquida", value: R$(fin.commission), sub: "Após Hubla + coprodutores", tone: "pink" }),
+      h(KPI, { label: "Lucro Líquido", value: R$(fin.profit), sub: `Margem ${pct(fin.margin)}`, tone: fin.profit > 0 ? "good" : fin.profit < 0 ? "bad" : null })
+    ),
+    h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
+      h(KPI, { label: "Investimento Meta", value: R$(fin.spend), sub: `${pct(fin.gross > 0 ? fin.spend / fin.gross * 100 : 0)} do bruto` }),
+      h(KPI, { label: "ROAS (bruto)", value: `${fin.roas.toFixed(2)}x`, sub: `ROAS líquido ${fin.roasLiq.toFixed(2)}x`, tone: fin.roas >= 3 ? "good" : fin.roas > 0 && fin.roas < 2 ? "bad" : null }),
+      h(KPI, { label: "CPA", value: fin.sales > 0 ? R$(fin.cpa) : "—", sub: "Custo por venda (Meta)" })
+    ),
+    h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+      h(Card, { title: "Receita (Hubla)" },
+        h(PLRow, { l: "Faturamento Bruto", v: fin.gross }),
+        h(PLRow, { l: "↳ juros de parcelamento", v: fin.juros, memo: true }),
+        h(PLRow, { l: "↳ faturamento de tabela", v: fin.tabela, memo: true }),
+        h(PLRow, { l: "(−) Taxa Hubla", v: -fin.hublaFee, neg: true }),
+        h(PLRow, { l: "(−) Coprodutores (28%)", v: -fin.coprod, neg: true }),
+        h(PLRow, { l: "Comissão Líquida", v: fin.commission, total: true })
+      ),
+      h(Card, { title: "Resultado" },
+        h(PLRow, { l: "Comissão Líquida", v: fin.commission }),
+        h(PLRow, { l: "(−) Meta Ads (tráfego)", v: -fin.spend, neg: true }),
+        h(PLRow, { l: "(−) Despesas operacionais", v: -fin.opex, neg: true }),
+        h(PLRow, { l: "Lucro Líquido", v: fin.profit, total: true, hi: true })
+      )
+    )
+  );
+}
+function DRE({ fin, vis }) {
+  const byCat = {};
+  vis.expenses.forEach(e => { byCat[e.cat] = (byCat[e.cat] || 0) + e.amt; });
+  const Sect = ({ l }) => h("p", { style: { fontSize: 10, textTransform: "uppercase", letterSpacing: ".08em", color: "var(--ink3)", fontWeight: 600, margin: "14px 0 3px" } }, l);
+  const Row = ({ l, v, m, memo }) => h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0 4px " + (memo ? "26px" : "12px") } },
+    h("span", { style: { fontSize: memo ? 11.5 : 13, color: m ? "var(--ink3)" : memo ? "var(--ink3)" : "var(--ink2)" } }, l),
+    h("span", { className: "mono", style: { fontSize: memo ? 11.5 : 13, color: m ? "var(--ink3)" : memo ? "var(--ink3)" : v < 0 ? "var(--red)" : "var(--ink)" } }, m ? "—" : R$(v)));
+  const Tot = ({ l, v, hi }) => h("div", { style: { display: "flex", justifyContent: "space-between", padding: "9px 0 7px", margin: "3px 0 6px", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" } },
+    h("span", { style: { fontSize: 13, fontWeight: 600 } }, l),
+    h("span", { className: "mono", style: { fontSize: 13, fontWeight: 600, color: hi ? (v >= 0 ? "var(--green)" : "var(--red)") : "var(--ink)" } }, R$(v)));
+  const inds = [["Margem", pct(fin.margin)], ["ROAS bruto", `${fin.roas.toFixed(2)}x`], ["ROAS líq.", `${fin.roasLiq.toFixed(2)}x`], ["ROI", pct(fin.roi)], ["Vendas", num(fin.sales)], ["CPA", fin.sales > 0 ? R$(fin.cpa) : "—"]];
+  return h("div", { style: { maxWidth: 620 } },
+    h(Card, null,
+      h("p", { style: { fontSize: 16, fontWeight: 600, margin: "0 0 2px" } }, "Demonstrativo de Resultado — DRE"),
+      h("p", { style: { fontSize: 11, color: "var(--ink3)", margin: "0 0 6px" } }, "Anna Magalhães · Infoprodutos · Félix Hub"),
+      h(Sect, { l: "Receita Bruta (Hubla)" }),
+      h(Row, { l: "Faturamento bruto (clientes pagaram)", v: fin.gross }),
+      h(Row, { l: "dos quais, juros de parcelamento", v: fin.juros, memo: true }),
+      h(Row, { l: "faturamento de tabela (vendas × R$ 97)", v: fin.tabela, memo: true }),
+      h(Sect, { l: "(−) Deduções da plataforma" }),
+      h(Row, { l: "Taxa Hubla", v: -fin.hublaFee }),
+      h(Row, { l: "Coprodutores / tráfego (28%)", v: -fin.coprod }),
+      h(Tot, { l: "= Comissão Líquida (Félix/Anna)", v: fin.commission }),
+      h(Sect, { l: "(−) Custos de Aquisição" }),
+      h(Row, { l: "Investimento Meta Ads", v: -fin.spend }),
+      h(Sect, { l: "(−) Despesas Operacionais" }),
+      Object.keys(byCat).length === 0 ? h(Row, { l: "Nenhuma despesa no período", v: 0, m: true })
+        : Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([c, v]) => h(Row, { key: c, l: c, v: -v })),
+      h(Tot, { l: "= Lucro Líquido", v: fin.profit, hi: true }),
+      h("div", { style: { marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--line)" } },
+        h("p", { style: { fontSize: 10, textTransform: "uppercase", letterSpacing: ".07em", color: "var(--ink3)", fontWeight: 600, margin: "0 0 10px" } }, "Indicadores"),
+        h("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 } },
+          inds.map(([l, v]) => h("div", { key: l, style: { background: "var(--bg)", borderRadius: "var(--radius-sm)", padding: "10px 12px" } },
+            h("p", { style: { fontSize: 10, color: "var(--ink3)", margin: "0 0 3px" } }, l),
+            h("p", { className: "mono", style: { fontSize: 15, fontWeight: 600, margin: 0 } }, v)))
+        )
+      )
+    )
+  );
+}
+function Badge({ source }) {
+  const cw = source === "cowork";
+  return h("span", { style: { fontSize: 9.5, padding: "2px 6px", borderRadius: 5, fontWeight: 600, letterSpacing: ".04em",
+    background: cw ? "var(--pink-bg)" : "var(--line2)", color: cw ? "var(--pink)" : "var(--ink3)" } }, cw ? "AUTO" : "MANUAL");
+}
+function HublaView({ hubla }) {
+  if (!hubla.length) return h(Card, null, h("p", { className: "muted", style: { textAlign: "center", padding: "30px 0", fontSize: 13 } }, "Sem dados da Hubla ainda. O Cowork preenche isto diariamente em dados.js."));
+  return h(Card, { title: `Snapshots Hubla (${hubla.length})` },
+    h("table", null,
+      h("thead", null, h("tr", null, ["Mês", "Bruto", "Juros parc.", "Taxa Hubla", "Coprodutor", "Comissão líq.", "Vendas", "Fonte"].map(x => h("th", { key: x }, x)))),
+      h("tbody", null, [...hubla].sort((a, b) => (b.month || "").localeCompare(a.month || "")).map((s, i) => {
+        const c = hublaCascade(s);
+        return h("tr", { key: i },
+          h("td", { className: "b" }, monthLabel(s.month)),
+          h("td", { className: "mono" }, R$(c.gross)),
+          h("td", { className: "mono faint" }, R$(c.juros)),
+          h("td", { className: "mono red" }, R$(c.hublaFee)),
+          h("td", { className: "mono red" }, R$(c.coprod)),
+          h("td", { className: "mono b green" }, R$(c.commission)),
+          h("td", { className: "mono" }, num(c.sales)),
+          h("td", null, h(Badge, { source: s.source })));
+      }))
+    )
+  );
+}
+function MetaView({ meta }) {
+  if (!meta.length) return h(Card, null, h("p", { className: "muted", style: { textAlign: "center", padding: "30px 0", fontSize: 13 } }, "Sem dados de tráfego ainda. O Cowork preenche isto a partir da Torre de Controle."));
+  return h(Card, { title: `Snapshots Meta Ads (${meta.length})` },
+    h("table", null,
+      h("thead", null, h("tr", null, ["Mês", "Investido", "Impressões", "Cliques", "Conversões", "CPA", "Fonte"].map(x => h("th", { key: x }, x)))),
+      h("tbody", null, [...meta].sort((a, b) => (b.month || "").localeCompare(a.month || "")).map((e, i) => h("tr", { key: i },
+        h("td", { className: "b" }, monthLabel(e.month)),
+        h("td", { className: "mono red b" }, R$(e.spend)),
+        h("td", { className: "mono" }, num(e.imp)),
+        h("td", { className: "mono" }, num(e.clicks)),
+        h("td", { className: "mono" }, num(e.conv)),
+        h("td", { className: "mono" }, e.conv > 0 ? R$(e.spend / e.conv) : "—"),
+        h("td", null, h(Badge, { source: e.source })))))
+    )
+  );
+}
+function ExpView({ db, save, expenses }) {
+  const E = { date: "", cat: CATS[0], desc: "", amt: "", lid: "" };
+  const [f, setF] = useState(E);
+  const [ed, setEd] = useState(null);
+  const sub = () => {
+    if (!f.date || !f.amt) return;
+    const e = { id: ed || uid(), date: f.date, cat: f.cat, desc: f.desc, amt: +f.amt || 0, lid: f.lid || null };
+    save({ ...db, expenses: ed ? db.expenses.map(x => x.id === ed ? e : x) : [...db.expenses, e] });
+    setF(E); setEd(null);
+  };
+  const del = (id) => save({ ...db, expenses: db.expenses.filter(x => x.id !== id) });
+  const byCat = {};
+  expenses.forEach(e => { byCat[e.cat] = (byCat[e.cat] || 0) + e.amt; });
+  const lname = (id) => db.launches.find(l => l.id === id)?.name || "—";
+  return h("div", { style: { display: "grid", gridTemplateColumns: "280px 1fr", gap: 12, alignItems: "start" } },
+    h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
+      h(Card, { title: ed ? "Editar Despesa" : "Nova Despesa" },
+        h(Fld, { l: "Data" }, h("input", { type: "date", value: f.date, onChange: e => setF({ ...f, date: e.target.value }) })),
+        h(Fld, { l: "Categoria" }, h("select", { value: f.cat, onChange: e => setF({ ...f, cat: e.target.value }) }, CATS.map(c => h("option", { key: c, value: c }, c)))),
+        h(Fld, { l: "Descrição" }, h("input", { placeholder: "Ex: MLabs — Junho", value: f.desc, onChange: e => setF({ ...f, desc: e.target.value }) })),
+        h(Fld, { l: "Valor (R$)" }, h("input", { type: "number", placeholder: "Ex: 149.00", value: f.amt, onChange: e => setF({ ...f, amt: e.target.value }) })),
+        h(Fld, { l: "Lançamento (opcional)" }, h("select", { value: f.lid, onChange: e => setF({ ...f, lid: e.target.value }) }, h("option", { value: "" }, "—"), db.launches.map(l => h("option", { key: l.id, value: l.id }, l.name)))),
+        h("div", { style: { display: "flex", gap: 6 } },
+          h("button", { className: "primary", onClick: sub, style: { flex: 1 } }, ed ? "Salvar" : "Adicionar"),
+          ed && h("button", { onClick: () => { setF(E); setEd(null); } }, "Cancelar"))
+      ),
+      Object.keys(byCat).length > 0 && h(Card, { title: "Por categoria" },
+        Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([c, v]) => h("div", { key: c, style: { display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid var(--line2)", fontSize: 12.5 } },
+          h("span", { className: "muted" }, c), h("span", { className: "mono red b" }, R$(v)))),
+        h("div", { style: { display: "flex", justifyContent: "space-between", padding: "8px 0 0", fontWeight: 600, fontSize: 12.5 } },
+          h("span", null, "Total"), h("span", { className: "mono red" }, R$(Object.values(byCat).reduce((a, b) => a + b, 0)))))
+    ),
+    h(Card, { title: `Despesas (${expenses.length})` },
+      expenses.length === 0 ? h("p", { className: "muted", style: { textAlign: "center", padding: "30px 0", fontSize: 13 } }, "Nenhuma despesa no período.")
+        : h("table", null,
+          h("thead", null, h("tr", null, ["Data", "Categoria", "Descrição", "Lançamento", "Valor", ""].map(x => h("th", { key: x }, x)))),
+          h("tbody", null, [...expenses].sort((a, b) => b.date.localeCompare(a.date)).map(e => h("tr", { key: e.id },
+            h("td", null, e.date.split("-").reverse().join("/")),
+            h("td", null, h("span", { style: { background: "var(--bg)", borderRadius: 5, padding: "2px 7px", fontSize: 10.5 } }, e.cat)),
+            h("td", { className: "muted" }, e.desc),
+            h("td", { className: "faint", style: { fontSize: 11 } }, lname(e.lid)),
+            h("td", { className: "mono red b" }, R$(e.amt)),
+            h("td", null, h("button", { className: "danger", onClick: () => del(e.id), style: { padding: "4px 8px" } }, "Excluir"))))))
+    )
+  );
+}
+function LaunchView({ db, save }) {
+  const E = { pid: db.products[0]?.id || "", name: "", start: "", end: "" };
+  const [f, setF] = useState(E);
+  const sub = () => { if (!f.name) return; save({ ...db, launches: [...db.launches, { id: uid(), ...f }] }); setF(E); };
+  const del = (id) => save({ ...db, launches: db.launches.filter(x => x.id !== id) });
+  const pname = (pid) => db.products.find(p => p.id === pid)?.name || "—";
+  return h("div", { style: { display: "grid", gridTemplateColumns: "280px 1fr", gap: 12, alignItems: "start" } },
+    h(Card, { title: "Novo Lançamento" },
+      h(Fld, { l: "Produto" }, h("select", { value: f.pid, onChange: e => setF({ ...f, pid: e.target.value }) }, db.products.map(p => h("option", { key: p.id, value: p.id }, p.name)))),
+      h(Fld, { l: "Nome" }, h("input", { placeholder: "Ex: Perpétuo Junho", value: f.name, onChange: e => setF({ ...f, name: e.target.value }) })),
+      h(Fld, { l: "Início" }, h("input", { type: "date", value: f.start, onChange: e => setF({ ...f, start: e.target.value }) })),
+      h(Fld, { l: "Fim" }, h("input", { type: "date", value: f.end, onChange: e => setF({ ...f, end: e.target.value }) })),
+      h("button", { className: "primary", onClick: sub, style: { width: "100%" } }, "Criar")),
+    h(Card, { title: `Lançamentos (${db.launches.length})` },
+      db.launches.length === 0 ? h("p", { className: "muted", style: { textAlign: "center", padding: "30px 0", fontSize: 13 } }, "Nenhum lançamento.")
+        : h("table", null,
+          h("thead", null, h("tr", null, ["Nome", "Produto", "Início", "Fim", ""].map(x => h("th", { key: x }, x)))),
+          h("tbody", null, db.launches.map(l => h("tr", { key: l.id },
+            h("td", { className: "b" }, l.name), h("td", { className: "faint", style: { fontSize: 11 } }, pname(l.pid)),
+            h("td", null, l.start || "—"), h("td", null, l.end || "—"),
+            h("td", null, h("button", { className: "danger", onClick: () => del(l.id), style: { padding: "4px 8px" } }, "Excluir")))))))
+  );
+}
+function ProductView({ db, save }) {
+  const [name, setName] = useState("");
+  const sub = () => { if (!name.trim()) return; save({ ...db, products: [...db.products, { id: uid(), name: name.trim() }] }); setName(""); };
+  const del = (id) => save({ ...db, products: db.products.filter(x => x.id !== id) });
+  return h("div", { style: { display: "grid", gridTemplateColumns: "280px 1fr", gap: 12, alignItems: "start" } },
+    h(Card, { title: "Novo Produto" },
+      h(Fld, { l: "Nome" }, h("input", { value: name, onChange: e => setName(e.target.value), onKeyDown: e => e.key === "Enter" && sub(), placeholder: "Ex: Treine em Casa" })),
+      h("button", { className: "primary", onClick: sub, style: { width: "100%" } }, "Criar")),
+    h(Card, { title: `Produtos (${db.products.length})` },
+      h("table", null, h("thead", null, h("tr", null, h("th", null, "Nome"), h("th"))),
+        h("tbody", null, db.products.map(p => h("tr", { key: p.id },
+          h("td", { className: "b" }, p.name),
+          h("td", null, h("button", { className: "danger", onClick: () => del(p.id), style: { padding: "4px 8px" } }, "Excluir")))))))
+  );
+}
+function Fld({ l, children }) {
+  return h("div", { style: { marginBottom: 10 } },
+    h("label", { style: { fontSize: 10, textTransform: "uppercase", letterSpacing: ".05em", color: "var(--ink3)", fontWeight: 600, display: "block", marginBottom: 4 } }, l), children);
+}
+ReactDOM.createRoot(document.getElementById("root")).render(h(App));
+</script>
+</body>
+</html>
