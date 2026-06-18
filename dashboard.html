@@ -104,7 +104,8 @@ function persist(d) { try { localStorage.setItem(LS, JSON.stringify(d)); } catch
 function App() {
   const [db, setDb] = useState(load);
   const [tab, setTab] = useState("dash");
-  const [mf, setMf] = useState("all"); // filtro de mês
+  const curMonth = new Date().toISOString().slice(0, 7);
+  const [mf, setMf] = useState(curMonth); // filtro de mês — padrão: mês corrente
   const save = (next) => { setDb(next); persist(next); };
   const hubla = useMemo(() => [...(DADOS.hubla || []).map(x => ({ ...x, source: "cowork" })), ...db.manualHubla], [db.manualHubla]);
   const meta = useMemo(() => [...(DADOS.meta || []).map(x => ({ ...x, source: "cowork" })), ...db.manualMeta], [db.manualMeta]);
