@@ -99,17 +99,19 @@ function App() {
     let gross = 0, commission = 0, sales = 0, tabela = 0, juros = 0, hublaFee = 0, coprod = 0;
     vis.hubla.forEach(s => { const c = hublaCascade(s); gross += c.gross; commission += c.commission; sales += c.sales; tabela += c.tabela; juros += c.juros; hublaFee += c.hublaFee; coprod += c.coprod; });
     const spend = vis.meta.reduce((a, b) => a + (b.spend || 0), 0);
+    const conv = vis.meta.reduce((a, b) => a + (b.conv || 0), 0);
+    const organicSales = Math.max(0, sales - conv);
     const opex = vis.expenses.reduce((a, b) => a + (b.amt || 0), 0);
     const profit = commission - spend - opex;
     return {
-      gross, commission, sales, tabela, juros, hublaFee, coprod, spend, opex, profit,
+      gross, commission, sales, tabela, juros, hublaFee, coprod, spend, conv, organicSales, opex, profit,
       costs: spend + opex,
       roas: spend > 0 ? gross / spend : 0,
       roasLiq: spend > 0 ? commission / spend : 0,
       roi: (spend + opex) > 0 ? (profit / (spend + opex)) * 100 : 0,
       margin: commission > 0 ? (profit / commission) * 100 : 0,
       ticket: sales > 0 ? gross / sales : 0,
-      cpa: sales > 0 ? spend / sales : 0,
+      cpa: conv > 0 ? spend / conv : 0,
     };
   }, [vis]);
   const TABS = [["dash","Dashboard"],["pl","DRE"],["hubla","Hubla"],["meta","Meta Ads"],["exp","Despesas"],["launches","Lançamentos"],["products","Produtos"]];
@@ -165,14 +167,14 @@ function Dash({ fin }) {
     h("span", { className: "mono", style: { fontSize: memo ? 11 : 13, fontWeight: total ? 600 : 400, color: hi ? (v >= 0 ? "var(--green)" : "var(--red)") : memo ? "var(--ink3)" : neg ? "var(--red)" : "var(--ink)" } }, R$(v)));
   return h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
     h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
-      h(KPI, { label: "Faturamento Bruto", value: R$(fin.gross), sub: `${num(fin.sales)} vendas · ticket ${R$(fin.ticket)}` }),
+      h(KPI, { label: "Faturamento Bruto", value: R$(fin.gross), sub: `${num(fin.sales)} vendas · ${num(fin.conv)} pagas + ${num(fin.organicSales)} orgânicas` }),
       h(KPI, { label: "Comissão Líquida", value: R$(fin.commission), sub: "Após Hubla + coprodutores", tone: "pink" }),
       h(KPI, { label: "Lucro Líquido", value: R$(fin.profit), sub: `Margem ${pct(fin.margin)}`, tone: fin.profit > 0 ? "good" : fin.profit < 0 ? "bad" : null })
     ),
     h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
       h(KPI, { label: "Investimento Meta", value: R$(fin.spend), sub: `${pct(fin.gross > 0 ? fin.spend / fin.gross * 100 : 0)} do bruto` }),
       h(KPI, { label: "ROAS (bruto)", value: `${fin.roas.toFixed(2)}x`, sub: `ROAS líquido ${fin.roasLiq.toFixed(2)}x`, tone: fin.roas >= 3 ? "good" : fin.roas > 0 && fin.roas < 2 ? "bad" : null }),
-      h(KPI, { label: "CPA", value: fin.sales > 0 ? R$(fin.cpa) : "—", sub: "Custo por venda (Meta)" })
+      h(KPI, { label: "CPA", value: fin.conv > 0 ? R$(fin.cpa) : "—", sub: `Custo por venda paga (${num(fin.conv)} conv. Meta)` })
     ),
     h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
       h(Card, { title: "Receita (Hubla)" },
@@ -202,7 +204,7 @@ function DRE({ fin, vis }) {
   const Tot = ({ l, v, hi }) => h("div", { style: { display: "flex", justifyContent: "space-between", padding: "9px 0 7px", margin: "3px 0 6px", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" } },
     h("span", { style: { fontSize: 13, fontWeight: 600 } }, l),
     h("span", { className: "mono", style: { fontSize: 13, fontWeight: 600, color: hi ? (v >= 0 ? "var(--green)" : "var(--red)") : "var(--ink)" } }, R$(v)));
-  const inds = [["Margem", pct(fin.margin)], ["ROAS bruto", `${fin.roas.toFixed(2)}x`], ["ROAS líq.", `${fin.roasLiq.toFixed(2)}x`], ["ROI", pct(fin.roi)], ["Vendas", num(fin.sales)], ["CPA", fin.sales > 0 ? R$(fin.cpa) : "—"]];
+  const inds = [["Margem", pct(fin.margin)], ["ROAS bruto", `${fin.roas.toFixed(2)}x`], ["ROAS líq.", `${fin.roasLiq.toFixed(2)}x`], ["ROI", pct(fin.roi)], ["Vendas", `${num(fin.sales)} (${num(fin.conv)} pagas)`], ["CPA", fin.conv > 0 ? R$(fin.cpa) : "—"]];
   return h("div", { style: { maxWidth: 620 } },
     h(Card, null,
       h("p", { style: { fontSize: 16, fontWeight: 600, margin: "0 0 2px" } }, "Demonstrativo de Resultado — DRE"),
