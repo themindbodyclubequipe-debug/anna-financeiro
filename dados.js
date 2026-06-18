@@ -21,16 +21,27 @@ window.DADOS = {
   ],
 
   // META ADS — da Torre de Controle (parceiros de tráfego).
-  //   spend  = Valor investido
+  //   spend  = Valor investido (sem imposto)
+  //   tax    = Imposto sobre a compra de mídia (ex: 12,15%)
   //   imp    = Impressões | clicks = Cliques no link | conv = Compras
   meta: [
     {
       month: "2026-06",
-      spend: 3035,
-      imp: 227449,
-      clicks: 1759,
-      conv: 86,
+      spend: 3247,
+      tax: 394,
+      imp: 246619,
+      clicks: 1867,
+      conv: 92,
       atualizado: "2026-06-18"
     }
+  ],
+
+  // ASSINATURAS RECORRENTES — incluídas automaticamente no opex de cada mês.
+  //   amt    = valor mensal
+  //   start  = mês de início (AAAA-MM)
+  //   months = quantidade de meses
+  //   cat    = categoria (aparece no DRE e Despesas)
+  subscriptions: [
+    { name: "Sendflow", amt: 277, start: "2026-06", months: 6, cat: "Plataforma" }
   ]
 };

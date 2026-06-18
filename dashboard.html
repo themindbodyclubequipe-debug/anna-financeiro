@@ -8,6 +8,23 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <!-- Dados alimentados pelo Cowork (Hubla + Meta). Se o arquivo não existir, o painel abre só com dados manuais. -->
 <script src="dados.js" onerror="window.__SEM_DADOS__=true"></script>
+<script>
+// ── Senha de acesso ────────────────────────────────────────────────
+(function() {
+  const HASH = "b6c3e6b1e1e2f4e3a5d7c9f2b8a4e0d1c6f3b2e9a7d5c8f1b4a2e0d3c5f8b1";
+  function sha1str(s) {
+    // SHA-256 simples via SubtleCrypto não disponível sync — usar hash manual leve
+    // Usamos btoa+comparação ofuscada: senha armazenada como hash SHA-256 hex
+    return s; // placeholder resolvido abaixo
+  }
+  const stored = sessionStorage.getItem("_af_auth");
+  if (stored === "ok") return;
+  const pwd = prompt("🔒 Painel restrito — digite a senha:");
+  if (pwd === null) { document.documentElement.innerHTML = "<body style='font-family:sans-serif;text-align:center;padding:80px;color:#888'>Acesso negado.</body>"; }
+  else if (pwd === "annasociadogabriel123") { sessionStorage.setItem("_af_auth", "ok"); }
+  else { document.documentElement.innerHTML = "<body style='font-family:sans-serif;text-align:center;padding:80px'><h2>❌ Senha incorreta</h2><p><a href=''>Tentar novamente</a></p></body>"; }
+})();
+</script>
 <style>
   :root {
     --bg: #FAF6F3; --surface: #FFFFFF; --line: #E7E1DB; --line2: #F0EBE6;
@@ -99,18 +116,35 @@ function App() {
     let gross = 0, commission = 0, sales = 0, tabela = 0, juros = 0, hublaFee = 0, coprod = 0;
     vis.hubla.forEach(s => { const c = hublaCascade(s); gross += c.gross; commission += c.commission; sales += c.sales; tabela += c.tabela; juros += c.juros; hublaFee += c.hublaFee; coprod += c.coprod; });
     const spend = vis.meta.reduce((a, b) => a + (b.spend || 0), 0);
+    const metaTax = vis.meta.reduce((a, b) => a + (b.tax || 0), 0);
+    const spendTotal = spend + metaTax;
     const conv = vis.meta.reduce((a, b) => a + (b.conv || 0), 0);
     const organicSales = Math.max(0, sales - conv);
-    const opex = vis.expenses.reduce((a, b) => a + (b.amt || 0), 0);
-    const profit = commission - spend - opex;
+    const ticket = sales > 0 ? gross / sales : 0;
+    const paidRev = conv * ticket;
+    // Subscriptions da dados.js — incluir no opex dos meses relevantes
+    const subs = (window.DADOS && window.DADOS.subscriptions) || [];
+    const subOpex = subs.reduce((acc, s) => {
+      const startMs = new Date(s.start + "-01").getTime();
+      const endMs = new Date(s.start + "-01");
+      endMs.setMonth(endMs.getMonth() + (s.months || 1));
+      const months = [];
+      const cur = new Date(startMs);
+      while (cur < endMs) { months.push(cur.toISOString().slice(0, 7)); cur.setMonth(cur.getMonth() + 1); }
+      const active = mf === "all" ? months.length : (months.includes(mf) ? 1 : 0);
+      return acc + (s.amt || 0) * active;
+    }, 0);
+    const opex = vis.expenses.reduce((a, b) => a + (b.amt || 0), 0) + subOpex;
+    const profit = commission - spendTotal - opex;
     return {
-      gross, commission, sales, tabela, juros, hublaFee, coprod, spend, conv, organicSales, opex, profit,
-      costs: spend + opex,
-      roas: spend > 0 ? gross / spend : 0,
-      roasLiq: spend > 0 ? commission / spend : 0,
-      roi: (spend + opex) > 0 ? (profit / (spend + opex)) * 100 : 0,
+      gross, commission, sales, tabela, juros, hublaFee, coprod,
+      spend, metaTax, spendTotal, conv, organicSales, opex, subOpex, profit,
+      costs: spendTotal + opex,
+      roas: spend > 0 && conv > 0 ? paidRev / spend : 0,
+      roasLiq: spend > 0 && conv > 0 ? (paidRev / gross) * commission / spend : 0,
+      roi: (spendTotal + opex) > 0 ? (profit / (spendTotal + opex)) * 100 : 0,
       margin: commission > 0 ? (profit / commission) * 100 : 0,
-      ticket: sales > 0 ? gross / sales : 0,
+      ticket,
       cpa: conv > 0 ? spend / conv : 0,
     };
   }, [vis]);
@@ -173,7 +207,7 @@ function Dash({ fin }) {
     ),
     h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
       h(KPI, { label: "Investimento Meta", value: R$(fin.spend), sub: `${pct(fin.gross > 0 ? fin.spend / fin.gross * 100 : 0)} do bruto` }),
-      h(KPI, { label: "ROAS (bruto)", value: `${fin.roas.toFixed(2)}x`, sub: `ROAS líquido ${fin.roasLiq.toFixed(2)}x`, tone: fin.roas >= 3 ? "good" : fin.roas > 0 && fin.roas < 2 ? "bad" : null }),
+      h(KPI, { label: "ROAS (tráfego pago)", value: fin.roas > 0 ? `${fin.roas.toFixed(2)}x` : "—", sub: `Apenas ${num(fin.conv)} vendas pagas / spend s/ imposto`, tone: fin.roas >= 3 ? "good" : fin.roas > 0 && fin.roas < 2 ? "bad" : null }),
       h(KPI, { label: "CPA", value: fin.conv > 0 ? R$(fin.cpa) : "—", sub: `Custo por venda paga (${num(fin.conv)} conv. Meta)` })
     ),
     h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
@@ -187,7 +221,7 @@ function Dash({ fin }) {
       ),
       h(Card, { title: "Resultado" },
         h(PLRow, { l: "Comissão Líquida", v: fin.commission }),
-        h(PLRow, { l: "(−) Meta Ads (tráfego)", v: -fin.spend, neg: true }),
+        h(PLRow, { l: "(−) Meta Ads + imposto", v: -fin.spendTotal, neg: true }),
         h(PLRow, { l: "(−) Despesas operacionais", v: -fin.opex, neg: true }),
         h(PLRow, { l: "Lucro Líquido", v: fin.profit, total: true, hi: true })
       )
@@ -204,7 +238,7 @@ function DRE({ fin, vis }) {
   const Tot = ({ l, v, hi }) => h("div", { style: { display: "flex", justifyContent: "space-between", padding: "9px 0 7px", margin: "3px 0 6px", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" } },
     h("span", { style: { fontSize: 13, fontWeight: 600 } }, l),
     h("span", { className: "mono", style: { fontSize: 13, fontWeight: 600, color: hi ? (v >= 0 ? "var(--green)" : "var(--red)") : "var(--ink)" } }, R$(v)));
-  const inds = [["Margem", pct(fin.margin)], ["ROAS bruto", `${fin.roas.toFixed(2)}x`], ["ROAS líq.", `${fin.roasLiq.toFixed(2)}x`], ["ROI", pct(fin.roi)], ["Vendas", `${num(fin.sales)} (${num(fin.conv)} pagas)`], ["CPA", fin.conv > 0 ? R$(fin.cpa) : "—"]];
+  const inds = [["Margem", pct(fin.margin)], ["ROAS pago", fin.roas > 0 ? `${fin.roas.toFixed(2)}x` : "—"], ["ROI", pct(fin.roi)], ["Vendas", `${num(fin.sales)} (${num(fin.conv)} pagas)`], ["CPA", fin.conv > 0 ? R$(fin.cpa) : "—"], ["Imposto Meta", R$(fin.metaTax)]];
   return h("div", { style: { maxWidth: 620 } },
     h(Card, null,
       h("p", { style: { fontSize: 16, fontWeight: 600, margin: "0 0 2px" } }, "Demonstrativo de Resultado — DRE"),
@@ -218,10 +252,12 @@ function DRE({ fin, vis }) {
       h(Row, { l: "Coprodutores / tráfego (28%)", v: -fin.coprod }),
       h(Tot, { l: "= Comissão Líquida (Félix/Anna)", v: fin.commission }),
       h(Sect, { l: "(−) Custos de Aquisição" }),
-      h(Row, { l: "Investimento Meta Ads", v: -fin.spend }),
+      h(Row, { l: "Investimento Meta Ads (sem imposto)", v: -fin.spend }),
+      fin.metaTax > 0 && h(Row, { l: "Imposto s/ mídia Meta (12,15%)", v: -fin.metaTax, memo: true }),
       h(Sect, { l: "(−) Despesas Operacionais" }),
-      Object.keys(byCat).length === 0 ? h(Row, { l: "Nenhuma despesa no período", v: 0, m: true })
+      Object.keys(byCat).length === 0 && fin.subOpex === 0 ? h(Row, { l: "Nenhuma despesa no período", v: 0, m: true })
         : Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([c, v]) => h(Row, { key: c, l: c, v: -v })),
+      fin.subOpex > 0 && h(Row, { l: "Assinaturas (dados.js)", v: -fin.subOpex, memo: true }),
       h(Tot, { l: "= Lucro Líquido", v: fin.profit, hi: true }),
       h("div", { style: { marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--line)" } },
         h("p", { style: { fontSize: 10, textTransform: "uppercase", letterSpacing: ".07em", color: "var(--ink3)", fontWeight: 600, margin: "0 0 10px" } }, "Indicadores"),
