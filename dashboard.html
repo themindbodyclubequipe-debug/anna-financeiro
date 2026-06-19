@@ -419,14 +419,25 @@ function useChart(ref, builder, deps) {
 }
 const PINK = "#FF007D", GREEN = "#1a7f5a", RED = "#C8326B", BLUE = "#3B82F6", AMBER = "#F59E0B", GRAY = "#A8A099";
 const PINK_A = "rgba(255,0,125,0.15)", GREEN_A = "rgba(26,127,90,0.15)", BLUE_A = "rgba(59,130,246,0.15)";
-function ChartCard({ title, sub, children }) {
+function ChartCard({ title, sub, badge, children }) {
   return h(Card, { title },
-    sub && h("p", { style: { fontSize: 11, color: "var(--ink3)", margin: "-4px 0 12px" } }, sub),
+    h("div", { style: { display: "flex", alignItems: "baseline", gap: 8, margin: "-4px 0 12px" } },
+      sub && h("p", { style: { fontSize: 11, color: "var(--ink3)", margin: 0, flex: 1 } }, sub),
+      badge && h("span", { style: { fontSize: 10, background: "var(--pink-bg)", color: "var(--pink)", borderRadius: 5, padding: "2px 6px", fontWeight: 600, whiteSpace: "nowrap" } }, badge)
+    ),
     children);
 }
 function Graficos({ fin, vis, hubla, meta }) {
   const { useRef } = React;
   const refWaterfall = useRef(), refFunil = useRef(), refEvolucao = useRef(), refEfic = useRef(), refProj = useRef();
+  // Pacing — dias decorridos no mes corrente
+  const _now = new Date();
+  const curMonth = _now.toISOString().slice(0, 7);
+  const daysEl = _now.getDate();
+  const daysTotal = new Date(_now.getFullYear(), _now.getMonth() + 1, 0).getDate();
+  const pace = daysEl / daysTotal;
+  const hasCur = hubla.some(x => x.month === curMonth) || meta.some(x => x.month === curMonth);
+  const paceBadge = hasCur ? daysEl + "/" + daysTotal + " dias" : null;
 
   // ── 1. Cascata (Waterfall) ────────────────────────────────────────────────
   useChart(refWaterfall, (canvas) => {
@@ -436,86 +447,190 @@ function Graficos({ fin, vis, hubla, meta }) {
       { l: "Coprodutores", v: -fin.coprod, type: "neg" },
       { l: "Meta + imposto", v: -fin.spendTotal, type: "neg" },
       { l: "Despesas op.", v: -fin.opex, type: "neg" },
-      { l: "Lucro Líquido", v: fin.profit, type: "total" },
+      { l: "Lucro Liquido", v: fin.profit, type: "total" },
     ];
     let running = 0;
     const bases = [], vals = [], colors = [];
-    steps.forEach((s, i) => {
-      if (s.type === "total") { bases.push(0); vals.push(fin.profit); colors.push(fin.profit >= 0 ? GREEN : RED); }
+    steps.forEach((s) => {
+      if (s.type === "total") { bases.push(0); vals.push(Math.abs(fin.profit)); colors.push(fin.profit >= 0 ? GREEN : RED); }
       else { bases.push(s.type === "neg" ? running + s.v : running); vals.push(Math.abs(s.v)); colors.push(s.type === "pos" ? BLUE : RED); running += s.v; }
     });
-    return new Chart(canvas, { type: "bar", data: { labels: steps.map(s => s.l), datasets: [{ data: bases, backgroundColor: "transparent", borderWidth: 0 }, { data: vals, backgroundColor: colors, borderRadius: 4, borderSkipped: false }] }, options: { responsive: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => c.datasetIndex === 1 ? R$(steps[c.dataIndex].v) : "" } } }, scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, ticks: { callback: v => "R$" + new Intl.NumberFormat("pt-BR").format(v / 1000) + "k" } } } } });
-  }, [fin]);
+    const datasets = [
+      { data: bases, backgroundColor: "transparent", borderWidth: 0 },
+      { label: "Realizado", data: vals, backgroundColor: colors, borderRadius: 4, borderSkipped: false },
+    ];
+    if (hasCur) {
+      let rP = 0; const basesP = [], valsP = [];
+      steps.forEach(s => {
+        const vProj = s.type === "total" ? Math.abs(fin.profit / pace) : Math.abs(s.v / pace);
+        if (s.type === "total") { basesP.push(0); valsP.push(vProj); }
+        else { basesP.push(s.type === "neg" ? rP + s.v / pace : rP); valsP.push(vProj); rP += s.v / pace; }
+      });
+      datasets.push({ data: basesP, backgroundColor: "transparent", borderWidth: 0 });
+      datasets.push({ label: "Proj. fim de mes (" + daysEl + "/" + daysTotal + "d)", data: valsP, backgroundColor: colors.map(c => c + "55"), borderColor: colors, borderWidth: 1.5, borderRadius: 4, borderSkipped: false });
+    }
+    return new Chart(canvas, {
+      type: "bar",
+      data: { labels: steps.map(s => s.l), datasets },
+      options: { responsive: true, plugins: { legend: { display: hasCur, position: "top", labels: { boxWidth: 10, font: { size: 10 } } }, tooltip: { callbacks: { label: (c) => c.datasetIndex % 2 === 1 ? R$(steps[c.dataIndex].v) : "" } } }, scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, ticks: { callback: v => "R$" + new Intl.NumberFormat("pt-BR").format(v / 1000) + "k" } } } }
+    });
+  }, [fin, hasCur, daysEl, daysTotal]);
 
-  // ── 2. Funil de tráfego ───────────────────────────────────────────────────
+  // ── 2. Funil de trafego ───────────────────────────────────────────────────
   useChart(refFunil, (canvas) => {
     const metaM = vis.meta[0] || {};
+    const isCur = metaM.month === curMonth;
     const steps = [
-      { l: "Impressões", v: metaM.imp || 0 },
+      { l: "Impressoes", v: metaM.imp || 0 },
       { l: "Cliques", v: metaM.clicks || 0 },
       { l: "Page Views", v: metaM.pageview || 0 },
       { l: "Checkout", v: metaM.checkout || 0 },
       { l: "Compras", v: metaM.conv || 0 },
     ];
-    const max = steps[0].v || 1;
-    return new Chart(canvas, { type: "bar", data: { labels: steps.map(s => s.l), datasets: [{ data: steps.map(s => s.v), backgroundColor: [BLUE, "rgba(59,130,246,0.75)", "rgba(59,130,246,0.55)", "rgba(59,130,246,0.38)", PINK], borderRadius: 4 }] }, options: { indexAxis: "y", responsive: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => { const i = c.dataIndex; const pct = i > 0 ? " (" + ((steps[i].v / steps[i-1].v)*100).toFixed(1) + "% do anterior)" : ""; return new Intl.NumberFormat("pt-BR").format(c.raw) + pct; } } } }, scales: { x: { max, ticks: { callback: v => new Intl.NumberFormat("pt-BR", { notation: "compact" }).format(v) } }, y: { grid: { display: false } } } } });
-  }, [vis.meta]);
+    const projSteps = isCur ? steps.map(s => Math.round(s.v / pace)) : null;
+    const max = projSteps ? projSteps[0] : (steps[0].v || 1);
+    const clrs = [BLUE, "rgba(59,130,246,0.75)", "rgba(59,130,246,0.55)", "rgba(59,130,246,0.38)", PINK];
+    const clrsProj = ["rgba(59,130,246,0.18)", "rgba(59,130,246,0.14)", "rgba(59,130,246,0.10)", "rgba(59,130,246,0.07)", "rgba(255,0,125,0.12)"];
+    const datasets = [{ label: "Realizado", data: steps.map(s => s.v), backgroundColor: clrs, borderRadius: 4 }];
+    if (projSteps) datasets.push({ label: "Proj. fim de mes (" + daysEl + "/" + daysTotal + "d)", data: projSteps, backgroundColor: clrsProj, borderColor: clrs, borderWidth: 1.5, borderRadius: 4 });
+    return new Chart(canvas, { type: "bar", data: { labels: steps.map(s => s.l), datasets }, options: { indexAxis: "y", responsive: true, plugins: { legend: { display: !!projSteps, position: "top", labels: { boxWidth: 10, font: { size: 10 } } }, tooltip: { callbacks: { label: c => { const i = c.dataIndex; const pct = (i > 0 && c.datasetIndex === 0) ? " (" + ((steps[i].v / steps[i-1].v)*100).toFixed(1) + "%)" : ""; return new Intl.NumberFormat("pt-BR").format(c.raw) + pct; } } } }, scales: { x: { max, ticks: { callback: v => new Intl.NumberFormat("pt-BR", { notation: "compact" }).format(v) } }, y: { grid: { display: false } } } } });
+  }, [vis.meta, daysEl, daysTotal]);
 
-  // ── 3. Evolução mensal ───────────────────────────────────────────────────
+  // ── 3. Evolucao mensal ─── com projecao pace no mes corrente ────────────
   useChart(refEvolucao, (canvas) => {
     const months = [...new Set([...hubla.map(x => x.month), ...meta.map(x => x.month)])].sort();
     const getHubla = (m) => { const s = hubla.find(x => x.month === m); return s ? hublaCascade(s) : null; };
     const getMeta = (m) => meta.find(x => x.month === m) || {};
-    const getSubs = (m) => (DADOS.subscriptions || []).reduce((a, s) => { const start = s.start; const end = new Date(s.start + "-01"); end.setMonth(end.getMonth() + s.months); const ms = []; const c = new Date(start + "-01"); while (c < end) { ms.push(c.toISOString().slice(0,7)); c.setMonth(c.getMonth()+1); } return a + (ms.includes(m) ? s.amt : 0); }, 0);
+    const getSubs = (m) => (DADOS.subscriptions || []).reduce((a, s) => { const end = new Date(s.start + "-01"); end.setMonth(end.getMonth() + s.months); const ms = []; const c = new Date(s.start + "-01"); while (c < end) { ms.push(c.toISOString().slice(0,7)); c.setMonth(c.getMonth()+1); } return a + (ms.includes(m) ? s.amt : 0); }, 0);
     const labels = months.map(m => monthLabel(m));
     const bruto = months.map(m => getHubla(m)?.gross || 0);
     const comissao = months.map(m => getHubla(m)?.commission || 0);
-    const lucro = months.map(m => { const h = getHubla(m); if (!h) return 0; const me = getMeta(m); const spendT = (me.spend||0)+(me.tax||0); return h.commission - spendT - getSubs(m); });
-    return new Chart(canvas, { type: "line", data: { labels, datasets: [{ label: "Faturamento Bruto", data: bruto, borderColor: BLUE, backgroundColor: BLUE_A, tension: 0.3, fill: false, pointRadius: 5 }, { label: "Comissão Líquida", data: comissao, borderColor: PINK, backgroundColor: PINK_A, tension: 0.3, fill: false, pointRadius: 5 }, { label: "Lucro Líquido", data: lucro, borderColor: GREEN, backgroundColor: GREEN_A, tension: 0.3, fill: true, pointRadius: 5 }] }, options: { responsive: true, plugins: { legend: { position: "top" }, tooltip: { callbacks: { label: c => c.dataset.label + ": " + R$(c.raw) } } }, scales: { y: { ticks: { callback: v => "R$" + new Intl.NumberFormat("pt-BR").format(v/1000) + "k" } } } } });
-  }, [hubla, meta]);
+    const lucro = months.map(m => { const hh = getHubla(m); if (!hh) return 0; const me = getMeta(m); return hh.commission - (me.spend||0) - (me.tax||0) - getSubs(m); });
+    const brutoProj = months.map((m, i) => m === curMonth ? +(bruto[i] / pace).toFixed(2) : null);
+    const lucroProj = months.map((m, i) => m === curMonth ? +(lucro[i] / pace).toFixed(2) : null);
+    const datasets = [
+      { label: "Faturamento Bruto", data: bruto, borderColor: BLUE, backgroundColor: BLUE_A, tension: 0.3, fill: false, pointRadius: 5 },
+      { label: "Comissao Liquida", data: comissao, borderColor: PINK, backgroundColor: PINK_A, tension: 0.3, fill: false, pointRadius: 5 },
+      { label: "Lucro Liquido", data: lucro, borderColor: GREEN, backgroundColor: GREEN_A, tension: 0.3, fill: true, pointRadius: 5 },
+    ];
+    if (hasCur) {
+      datasets.push({ label: "Bruto proj. fim mes", data: brutoProj, borderColor: BLUE, borderDash: [5, 4], tension: 0, pointRadius: 7, pointStyle: "triangle", pointBackgroundColor: BLUE, showLine: false });
+      datasets.push({ label: "Lucro proj. fim mes", data: lucroProj, borderColor: GREEN, borderDash: [5, 4], tension: 0, pointRadius: 7, pointStyle: "triangle", pointBackgroundColor: GREEN, showLine: false });
+    }
+    return new Chart(canvas, { type: "line", data: { labels, datasets }, options: { responsive: true, plugins: { legend: { position: "top", labels: { boxWidth: 10, font: { size: 10 } } }, tooltip: { callbacks: { label: c => c.dataset.label + ": " + R$(c.raw) } } }, scales: { y: { ticks: { callback: v => "R$" + new Intl.NumberFormat("pt-BR").format(v/1000) + "k" } } } } });
+  }, [hubla, meta, daysEl, daysTotal]);
 
   // ── 4. ROAS & CPA ─────────────────────────────────────────────────────────
   useChart(refEfic, (canvas) => {
     const months = [...new Set([...hubla.map(x => x.month), ...meta.map(x => x.month)])].sort();
     const getH = (m) => { const s = hubla.find(x => x.month === m); return s ? hublaCascade(s) : null; };
     const getM = (m) => meta.find(x => x.month === m) || {};
-    const roasData = months.map(m => { const h = getH(m); const me = getM(m); if (!h || !me.spend || !me.conv) return null; const ticket = h.gross / h.sales; return +((me.conv * ticket) / me.spend).toFixed(2); });
+    const roasData = months.map(m => { const hh = getH(m); const me = getM(m); if (!hh || !me.spend || !me.conv) return null; const ticket = hh.gross / hh.sales; return +((me.conv * ticket) / me.spend).toFixed(2); });
     const cpaData = months.map(m => { const me = getM(m); return me.conv ? +(me.spend / me.conv).toFixed(2) : null; });
-    return new Chart(canvas, { type: "line", data: { labels: months.map(m => monthLabel(m)), datasets: [{ label: "ROAS (eixo esq.)", data: roasData, borderColor: PINK, backgroundColor: PINK_A, tension: 0.3, yAxisID: "y", pointRadius: 5 }, { label: "CPA em R$ (eixo dir.)", data: cpaData, borderColor: AMBER, backgroundColor: "rgba(245,158,11,0.12)", tension: 0.3, yAxisID: "y2", pointRadius: 5 }] }, options: { responsive: true, plugins: { legend: { position: "top" } }, scales: { y: { title: { display: true, text: "ROAS (x)" }, ticks: { callback: v => v + "x" } }, y2: { position: "right", title: { display: true, text: "CPA (R$)" }, grid: { drawOnChartArea: false }, ticks: { callback: v => "R$" + v } } } } });
+    return new Chart(canvas, { type: "line", data: { labels: months.map(m => monthLabel(m)), datasets: [
+      { label: "ROAS", data: roasData, borderColor: PINK, backgroundColor: PINK_A, tension: 0.3, yAxisID: "y",
+        pointRadius: months.map((m) => m === curMonth ? 8 : 5),
+        pointStyle: months.map((m) => m === curMonth ? "star" : "circle"),
+        pointBackgroundColor: PINK },
+      { label: "CPA (R$)", data: cpaData, borderColor: AMBER, backgroundColor: "rgba(245,158,11,0.12)", tension: 0.3, yAxisID: "y2",
+        pointRadius: months.map((m) => m === curMonth ? 8 : 5),
+        pointStyle: months.map((m) => m === curMonth ? "star" : "circle") }
+    ] }, options: { responsive: true, plugins: { legend: { position: "top" }, tooltip: { callbacks: { label: c => c.datasetIndex === 0 ? "ROAS: " + c.raw + "x" : "CPA: " + R$(c.raw) } } }, scales: { y: { title: { display: true, text: "ROAS (x)" }, ticks: { callback: v => v + "x" } }, y2: { position: "right", title: { display: true, text: "CPA (R$)" }, grid: { drawOnChartArea: false }, ticks: { callback: v => "R$" + v } } } } });
   }, [hubla, meta]);
 
-  // ── 5. Projeção ───────────────────────────────────────────────────────────
+  // ── 5. Projecao por Verba ─── verba x ROAS x tempo → lucratividade ──────
   useChart(refProj, (canvas) => {
     const months = [...new Set([...hubla.map(x => x.month), ...meta.map(x => x.month)])].sort();
     const getH = (m) => { const s = hubla.find(x => x.month === m); return s ? hublaCascade(s) : null; };
     const getM = (m) => meta.find(x => x.month === m) || {};
     const getSubs = (m) => (DADOS.subscriptions || []).reduce((a, s) => { const end = new Date(s.start + "-01"); end.setMonth(end.getMonth() + s.months); const ms = []; const c = new Date(s.start + "-01"); while (c < end) { ms.push(c.toISOString().slice(0,7)); c.setMonth(c.getMonth()+1); } return a + (ms.includes(m) ? s.amt : 0); }, 0);
-    const historico = months.map(m => { const h = getH(m); if (!h) return null; const me = getM(m); return h.commission - (me.spend||0) - (me.tax||0) - getSubs(m); });
-    const n = historico.filter(v => v !== null).length;
-    const lastVal = historico[historico.length - 1] || 0;
-    let growthRate = 0;
-    if (n >= 2) { const valid = historico.filter(v => v !== null); growthRate = (valid[valid.length-1] / valid[0]) ** (1/(valid.length-1)) - 1; growthRate = Math.min(Math.max(growthRate, -0.2), 0.3); }
-    const lastMonth = months[months.length - 1] || new Date().toISOString().slice(0,7);
+    const lastM = months[months.length - 1];
+    const lastH = lastM ? getH(lastM) : null;
+    const lastMeta = lastM ? getM(lastM) : {};
+    const baseSpend = lastMeta.spend || 3000;
+    const baseROAS = lastH && lastMeta.spend && lastMeta.conv ? ((lastMeta.conv * (lastH.gross / (lastH.sales || 1))) / lastMeta.spend) : 2.8;
+    const hublaRatio = lastH ? lastH.hublaFee / (lastH.gross || 1) : 0.125;
+    const coprodRatio = lastH ? lastH.coprod / (lastH.gross || 1) : 0.20;
+    const baseOpex = getSubs(lastM) || 277;
+    const META_TAX = 0.1215;
+    function simProfit(spend, roas) {
+      const gross = spend * roas;
+      const commission = gross * (1 - hublaRatio - coprodRatio);
+      return +(commission - spend - spend * META_TAX - baseOpex).toFixed(2);
+    }
+    const historico = months.map(m => {
+      const hh = getH(m); if (!hh) return null;
+      const me = getM(m);
+      const val = hh.commission - (me.spend||0) - (me.tax||0) - getSubs(m);
+      return m === curMonth ? +(val / pace).toFixed(2) : val;
+    });
+    const scenarios = [
+      { label: "Atual R$" + (baseSpend/1000).toFixed(1) + "k/mes", mult: 1.0, roasFactor: 1.00, color: GREEN, dash: [] },
+      { label: "+50% R$" + (baseSpend*1.5/1000).toFixed(1) + "k/mes", mult: 1.5, roasFactor: 0.96, color: BLUE, dash: [] },
+      { label: "+100% R$" + (baseSpend*2.0/1000).toFixed(1) + "k/mes", mult: 2.0, roasFactor: 0.90, color: AMBER, dash: [] },
+      { label: "+200% R$" + (baseSpend*3.0/1000).toFixed(1) + "k/mes", mult: 3.0, roasFactor: 0.80, color: PINK, dash: [6, 4] },
+    ];
+    const lastMonth = months[months.length - 1] || curMonth;
     const futureMonths = [];
     const d = new Date(lastMonth + "-01");
-    for (let i = 1; i <= 5; i++) { d.setMonth(d.getMonth() + 1); futureMonths.push(d.toISOString().slice(0,7)); }
-    const projValues = futureMonths.map((_, i) => +(lastVal * Math.pow(1 + growthRate, i + 1)).toFixed(2));
+    for (let i = 1; i <= 6; i++) { d.setMonth(d.getMonth() + 1); futureMonths.push(d.toISOString().slice(0,7)); }
     const allLabels = [...months, ...futureMonths].map(m => monthLabel(m));
-    const histData = [...historico, ...Array(5).fill(null)];
-    const projData = [...Array(n).fill(null), lastVal, ...projValues];
-    return new Chart(canvas, { type: "line", data: { labels: allLabels, datasets: [{ label: "Lucro Real", data: histData, borderColor: GREEN, backgroundColor: GREEN_A, tension: 0.3, fill: true, pointRadius: 5 }, { label: "Projeção", data: projData, borderColor: AMBER, backgroundColor: "rgba(245,158,11,0.1)", tension: 0.3, borderDash: [6, 4], fill: true, pointRadius: 4, pointStyle: "rectRot" }] }, options: { responsive: true, plugins: { legend: { position: "top" }, tooltip: { callbacks: { label: c => c.dataset.label + ": " + R$(c.raw) } } }, scales: { y: { ticks: { callback: v => "R$" + new Intl.NumberFormat("pt-BR").format(v/1000) + "k" } } } } });
-  }, [hubla, meta]);
+    const n = months.length;
+    const datasets = [
+      { label: hasCur ? "Lucro real (proj. " + daysEl + "/" + daysTotal + "d no cur)" : "Lucro real", data: [...historico, ...Array(6).fill(null)], borderColor: GRAY, backgroundColor: "rgba(168,160,153,0.1)", borderWidth: 2, tension: 0.3, fill: false, pointRadius: 5,
+        pointStyle: months.map((m) => m === curMonth ? "triangle" : "circle"),
+        pointBackgroundColor: months.map((m) => m === curMonth ? AMBER : GRAY) },
+    ];
+    scenarios.forEach(sc => {
+      const spend = baseSpend * sc.mult;
+      const roas = baseROAS * sc.roasFactor;
+      const projData = [
+        ...Array(n - 1).fill(null),
+        historico[n - 1],
+        ...futureMonths.map((_, i) => {
+          const roasOtimizado = roas * Math.min(1 + 0.01 * (i + 1), 1.10);
+          return simProfit(spend, roasOtimizado);
+        })
+      ];
+      datasets.push({
+        label: sc.label,
+        data: projData,
+        borderColor: sc.color,
+        backgroundColor: sc.color + "18",
+        borderDash: sc.dash,
+        borderWidth: 2,
+        tension: 0.3,
+        fill: sc.mult === 1.0,
+        pointRadius: 4,
+        pointStyle: "rectRot",
+      });
+    });
+    const currentROASStr = lastH && lastMeta.spend && lastMeta.conv ? ((lastMeta.conv * (lastH.gross / (lastH.sales || 1))) / lastMeta.spend).toFixed(2) + "x" : "--";
+    return new Chart(canvas, {
+      type: "line",
+      data: { labels: allLabels, datasets },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: "top", labels: { boxWidth: 10, font: { size: 10 } } },
+          title: { display: true, text: "ROAS atual: " + currentROASStr + " | Projecao assume reducao de ROAS com mais verba (saturacao)", color: GRAY, font: { size: 10 }, padding: { bottom: 6 } },
+          tooltip: { callbacks: { label: c => c.dataset.label + ": " + R$(c.raw) } }
+        },
+        scales: { y: { ticks: { callback: v => "R$" + new Intl.NumberFormat("pt-BR").format(v/1000) + "k" } } }
+      }
+    });
+  }, [hubla, meta, daysEl, daysTotal]);
 
   const canvasStyle = { width: "100%", height: 260 };
   return h("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
     h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 } },
-      h(ChartCard, { title: "Cascata de Resultado", sub: "Onde vai cada R$ do faturamento" }, h("canvas", { ref: refWaterfall, style: canvasStyle })),
-      h(ChartCard, { title: "Funil de Tráfego", sub: "Do anúncio à compra" }, h("canvas", { ref: refFunil, style: canvasStyle }))
+      h(ChartCard, { title: "Cascata de Resultado", sub: "Onde vai cada R$ do faturamento", badge: paceBadge }, h("canvas", { ref: refWaterfall, style: canvasStyle })),
+      h(ChartCard, { title: "Funil de Trafego", sub: "Do anuncio a compra", badge: paceBadge }, h("canvas", { ref: refFunil, style: canvasStyle }))
     ),
-    h(ChartCard, { title: "Evolução Mensal", sub: "Faturamento, comissão e lucro ao longo do tempo" }, h("canvas", { ref: refEvolucao, style: { width: "100%", height: 220 } })),
+    h(ChartCard, { title: "Evolucao Mensal", sub: hasCur ? "Linhas solidas = realizado · triangulos = proj. fim de mes (" + daysEl + "/" + daysTotal + "d)" : "Faturamento, comissao e lucro ao longo do tempo", badge: paceBadge }, h("canvas", { ref: refEvolucao, style: { width: "100%", height: 220 } })),
     h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 } },
-      h(ChartCard, { title: "ROAS & CPA", sub: "Eficiência do tráfego pago por mês" }, h("canvas", { ref: refEfic, style: canvasStyle })),
-      h(ChartCard, { title: "Projeção — Lucro Líquido", sub: `Histórico + projeção para os próximos 5 meses` }, h("canvas", { ref: refProj, style: canvasStyle }))
+      h(ChartCard, { title: "ROAS & CPA", sub: hasCur ? "Mes corrente marcado com estrela. ROAS e CPA sao taxas (pace nao altera)" : "Eficiencia do trafego pago por mes", badge: paceBadge }, h("canvas", { ref: refEfic, style: canvasStyle })),
+      h(ChartCard, { title: "Projecao por Verba Investida", sub: "Lucro projetado nos proximos 6 meses por cenario de investimento em Meta Ads" }, h("canvas", { ref: refProj, style: canvasStyle }))
     )
   );
 }
